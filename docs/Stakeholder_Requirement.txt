@@ -1,0 +1,33 @@
+REQUIREMENTS
+REQ-01There shall be serial communication between the client and the server.
+
+REQ-02: Ensure all communication between the client and server is encrypted using AES-256 and authenticated using HMAC-SHA256
+
+REQ-03: The server must allow only one active session at a time, which expires after 1 minute of inactivity.
+
+REQ-04: The server must use an RGB LED to visually indicate its status:- Red for server errors.- Blue for invalid client requests.
+
+REQ-05: The client must have a graphical user interface (GUI)  to:
+   -Establish and terminate sessions.
+   - Retrieve ESP32 core temperature.
+   - Toggle a relay connected to pin 32.
+   - Log and display the status, state, and results of requests
+
+REQ-06: Prevent unauthorized access and ensure no communication is processed without a valid session.
+
+REQ-07: The system should support potential upgrades, such as additional commands or extended session timeouts.
+
+REQ-08: The system shall use RSA-2048 to securely share AES-256 keys and initialization vectors between the client and server.
+
+REQ-09: If a session expires due to inactivity, the client should be able to automatically re-establish the session 
+    -with a single retry attempt
+
+REQ-09: The secure communication system should adhere to standard security protocols 
+    -(e.g., HMAC-SHA256, AES-256, RSA-2048) to meet data protection and confidentiality expectations.
+
+REQ-10: The system design must allow for the addition of new features 
+    -(e.g., additional client commands or sensors) without significant architectural changes
+
+REQ-11: he client application should run on multiple operating systems, including Windows, 
+    -macOS, and Linux, to cater to diverse user environments.
+    
