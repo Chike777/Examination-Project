@@ -1,4 +1,5 @@
 import sys
+import argparse
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QPushButton, QLabel, QTextEdit, QLineEdit, QHBoxLayout
@@ -6,19 +7,17 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 class SecureClientGUI(QMainWindow):
-    def __init__(self):
+    def __init__(self, port=None, baudrate=None):
         super().__init__()
 
         self.setWindowTitle("Secure Client")
         self.setGeometry(100, 100, 600, 400)
 
-        # Central Widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout()
         central_widget.setLayout(layout)
 
-        # Serial Settings
         self.serial_settings_layout = QHBoxLayout()
         layout.addLayout(self.serial_settings_layout)
 
@@ -27,6 +26,8 @@ class SecureClientGUI(QMainWindow):
 
         self.port_input = QLineEdit()
         self.port_input.setPlaceholderText("COM port (e.g., COM3 or /dev/ttyUSB0)")
+        if port:  # Pre-fill port if provided
+            self.port_input.setText(port)
         self.serial_settings_layout.addWidget(self.port_input)
 
         self.baudrate_label = QLabel("Baudrate:")
@@ -34,14 +35,14 @@ class SecureClientGUI(QMainWindow):
 
         self.baudrate_input = QLineEdit()
         self.baudrate_input.setPlaceholderText("115200")
+        if baudrate:  # Pre-fill baudrate if provided
+            self.baudrate_input.setText(baudrate)
         self.serial_settings_layout.addWidget(self.baudrate_input)
 
-        # Session Management
         self.session_button = QPushButton("Establish Session")
         self.session_button.clicked.connect(self.toggle_session)
         layout.addWidget(self.session_button)
 
-        # Control Buttons
         self.temperature_button = QPushButton("Get Temperature")
         self.temperature_button.clicked.connect(self.get_temperature)
         self.temperature_button.setEnabled(False)
@@ -52,7 +53,6 @@ class SecureClientGUI(QMainWindow):
         self.relay_button.setEnabled(False)
         layout.addWidget(self.relay_button)
 
-        # Logging
         self.log_label = QLabel("Logs:")
         layout.addWidget(self.log_label)
 
@@ -64,7 +64,6 @@ class SecureClientGUI(QMainWindow):
         self.clear_log_button.clicked.connect(self.clear_logs)
         layout.addWidget(self.clear_log_button)
 
-        # Session State
         self.session_active = False
 
     def toggle_session(self):
@@ -113,7 +112,15 @@ class SecureClientGUI(QMainWindow):
         self.log_area.clear()
 
 if __name__ == "__main__":
+    # Set up argparse
+    parser = argparse.ArgumentParser(description="Secure Client GUI Application")
+    parser.add_argument("--port", type=str, help="The COM port (e.g., COM3 or /dev/ttyUSB0)")
+    parser.add_argument("--baudrate", type=str, help="The baud rate (e.g., 115200)")
+
+    args = parser.parse_args()
+
+    # Create the application
     app = QApplication(sys.argv)
-    gui = SecureClientGUI()
+    gui = SecureClientGUI(port=args.port, baudrate=args.baudrate)
     gui.show()
     sys.exit(app.exec())
