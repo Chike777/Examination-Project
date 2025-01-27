@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QTextEdit, QLineEdit, QHBoxLayout
 )
 from PyQt6.QtCore import Qt
+import serial
 
 class SecureClientGUI(QMainWindow):
     def __init__(self, port=None, baudrate=None):
@@ -12,6 +13,10 @@ class SecureClientGUI(QMainWindow):
 
         self.setWindowTitle("Secure Client")
         self.setGeometry(100, 100, 600, 400)
+
+        self.serial_connection = None
+        self.port = port
+        self.baudrate = baudrate
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -74,6 +79,10 @@ class SecureClientGUI(QMainWindow):
             self.session_button.setText("Close Session")
             self.temperature_button.setEnabled(True)
             self.relay_button.setEnabled(True)
+
+            # Initialize serial connection
+            self.initialize_serial_connection()
+
             self.log("Session established.")
         else:
             self.log("Closing session...")
@@ -81,17 +90,39 @@ class SecureClientGUI(QMainWindow):
             self.session_button.setText("Establish Session")
             self.temperature_button.setEnabled(False)
             self.relay_button.setEnabled(False)
+
+            # Close serial connection
+            self.close_serial_connection()
+
             self.log("Session closed.")
 
+    def initialize_serial_connection(self):
+        """Initialize the serial connection."""
+        try:
+            self.serial_connection = serial.Serial(self.port, self.baudrate, timeout=1)
+            if self.serial_connection.is_open:
+                self.log(f"Connected to {self.port} at {self.baudrate} baud.")
+        except Exception as e:
+            self.log(f"Error initializing serial connection: {e}")
+
+    def close_serial_connection(self):
+        """Close the serial connection."""
+        if self.serial_connection and self.serial_connection.is_open:
+            self.serial_connection.close()
+            self.log(f"Connection closed.")
+
     def get_temperature(self):
-        """Simulate retrieving temperature from the server."""
-        if self.session_active:
-            self.log("Retrieving temperature...")
-            # Simulate a temperature value
-            temperature = "25.3°C"
-            self.log(f"Temperature: {temperature}")
+        received_bytes = self.serial_connection
+        if received_bytes is not None:
+            try:
+                temperature = received_bytes = self.serial_connection.readline().strip()
+                temperature = received_bytes.decode("utf-8")
+                message = f"Temperature: {temperature} °C"
+                self.log(message)
+            except Exception as e:
+                self.log(f"Error decoding temperature: {(e)}")
         else:
-            self.log("Session not active. Cannot retrieve temperature.")
+            self.log("Failed to retrieve temperature")
 
     def toggle_relay(self):
         """Simulate toggling the relay on the server."""
@@ -105,7 +136,7 @@ class SecureClientGUI(QMainWindow):
 
     def log(self, message):
         """Log a message to the log area."""
-        self.log_area.append(f"[{Qt.QTime.currentTime().toString()}] {message}")
+        self.log_area.append(f" {message}")
 
     def clear_logs(self):
         """Clear the log area."""
@@ -124,3 +155,6 @@ if __name__ == "__main__":
     gui = SecureClientGUI(port=args.port, baudrate=args.baudrate)
     gui.show()
     sys.exit(app.exec())
+    
+    
+    #python3 main.py --port /dev/ttyUSB0 --baudrate 115200
