@@ -112,27 +112,30 @@ class SecureClientGUI(QMainWindow):
             self.log(f"Connection closed.")
 
     def get_temperature(self):
-        received_bytes = self.serial_connection
-        if received_bytes is not None:
+        """Request temperature from the ESP32 server."""
+        if self.session_active and self.serial_connection:
             try:
-                temperature = received_bytes = self.serial_connection.readline().strip()
-                temperature = received_bytes.decode("utf-8")
-                message = f"Temperature: {temperature} °C"
-                self.log(message)
+                # Send temperature request command
+                self.serial_connection.write(b"GET_TEMP\n")
+                response = self.serial_connection.readline().decode("utf-8").strip()
+                self.log(f"Temperature: {response} °C")
             except Exception as e:
-                self.log(f"Error decoding temperature: {(e)}")
+                self.log(f"Error reading temperature: {e}")
         else:
-            self.log("Failed to retrieve temperature")
+            self.log("Session not active or serial connection not established.")
 
     def toggle_relay(self):
-        """Simulate toggling the relay on the server."""
-        if self.session_active:
-            self.log("Toggling relay...")
-            # Simulate relay toggling
-            relay_state = "ON" if "OFF" in self.log_area.toPlainText() else "OFF"
-            self.log(f"Relay toggled to: {relay_state}")
+        """Toggle the relay on the ESP32 server."""
+        if self.session_active and self.serial_connection:
+            try:
+                # Send relay toggle command
+                self.serial_connection.write(b"TOGGLE_RELAY\n")
+                response = self.serial_connection.readline().decode("utf-8").strip()
+                self.log(f"Relay state: {response}")
+            except Exception as e:
+                self.log(f"Error toggling relay: {e}")
         else:
-            self.log("Session not active. Cannot toggle relay.")
+            self.log("Session not active or serial connection not established.")
 
     def log(self, message):
         """Log a message to the log area."""
@@ -155,6 +158,3 @@ if __name__ == "__main__":
     gui = SecureClientGUI(port=args.port, baudrate=args.baudrate)
     gui.show()
     sys.exit(app.exec())
-    
-    
-    #python3 main.py --port /dev/ttyUSB0 --baudrate 115200
