@@ -30,7 +30,7 @@ class SecureClientGUI(QMainWindow):
         self.serial_settings_layout.addWidget(self.port_label)
 
         self.port_input = QLineEdit()
-        self.port_input.setPlaceholderText("COM port (e.g., COM3 or /dev/ttyUSB0)")
+        self.port_input.setPlaceholderText("COM port (/dev/ttyUSB0)")
         if port:  # Pre-fill port if provided
             self.port_input.setText(port)
         self.serial_settings_layout.addWidget(self.port_input)
@@ -40,7 +40,7 @@ class SecureClientGUI(QMainWindow):
 
         self.baudrate_input = QLineEdit()
         self.baudrate_input.setPlaceholderText("115200")
-        if baudrate:  # Pre-fill baudrate if provided
+        if baudrate:  
             self.baudrate_input.setText(baudrate)
         self.serial_settings_layout.addWidget(self.baudrate_input)
 
@@ -146,14 +146,14 @@ class SecureClientGUI(QMainWindow):
         self.log_area.clear()
 
 if __name__ == "__main__":
-    # Set up argparse
+
     parser = argparse.ArgumentParser(description="Secure Client GUI Application")
     parser.add_argument("--port", type=str, help="The COM port (e.g., COM3 or /dev/ttyUSB0)")
     parser.add_argument("--baudrate", type=str, help="The baud rate (e.g., 115200)")
 
     args = parser.parse_args()
 
-    # Create the application
+
     app = QApplication(sys.argv)
     gui = SecureClientGUI(port=args.port, baudrate=args.baudrate)
     gui.show()
