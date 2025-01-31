@@ -30,8 +30,8 @@ void loop()
 
         if (command == "GET_TEMP")
         {
-            // Simulate temperature reading (replace with actual sensor code)
-            float temperature = 25.0; // Example temperature
+            // Simulate temperature reading
+            float temperature = 65.0;
             Serial.println(temperature);
         }
         else if (command == "TOGGLE_RELAY")
