@@ -1,160 +1,278 @@
 import sys
-import argparse
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QPushButton, QLabel, QTextEdit, QLineEdit, QHBoxLayout
-)
-from PyQt6.QtCore import Qt
+import time
+from PyQt6.QtWidgets import QApplication, QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit
+from PyQt6.QtCore import QDateTime, QTimer
+from mbedtls import pk, hmac, hashlib, cipher
 import serial
 
-class SecureClientGUI(QMainWindow):
-    def __init__(self, port=None, baudrate=None):
+# Constants
+RSA_SIZE = 256
+EXPONENT = 65537
+SECRET_KEY = b"Fj2-;wu3Ur=ARl2!Tqi6IuKM3nG]8z1+"
+
+SERIAL_BAUDRATE = 115200
+CHECK_MSG = b"OKAY"
+ERROR = True
+
+# Global Variables
+HMAC_KEY = None
+hmac_hash = None
+ser = None
+client_rsa = None
+server_rsa = None
+SESSION_ID = None
+aes = None
+
+def initialize():
+    global HMAC_KEY, hmac_hash, ser, client_rsa
+    
+    # Initialize HMAC key
+    HMAC_KEY = hashlib.sha256()
+    HMAC_KEY.update(SECRET_KEY)
+    HMAC_KEY = HMAC_KEY.digest()
+    hmac_hash = hmac.new(HMAC_KEY, digestmod="SHA256")
+    
+    # Initialize serial communication
+    ser = serial.Serial(SERIAL_PORT, SERIAL_BAUDRATE)
+    
+    # Generate client RSA key pair
+    client_rsa = pk.RSA()
+    client_rsa.generate(RSA_SIZE * 8, EXPONENT)
+
+def error_log():
+    global ERROR
+    ERROR = False
+
+def client_close():
+    global ser
+    if ser and ser.is_open:
+        ser.write(b"close")
+        ser.close()
+        ser = None
+
+def client_send(buf: bytes):
+    hmac_hash.update(buf)
+    buf += hmac_hash.digest()
+    if len(buf) != ser.write(buf):
+        print("Connection Error")
+        client_close()
+
+def client_receive(size: int) -> bytes:
+    buffer = ser.read(size + hmac_hash.digest_size)
+    hmac_hash.update(buffer[0:size])
+    buff = buffer[size:size + hmac_hash.digest_size]
+    dig = hmac_hash.digest()
+    if buff != dig:
+        try:            
+            error_log()
+        except:
+            client_close()
+
+    return buffer[0:size]
+
+def handshake():
+    global client_rsa, server_rsa
+
+    client_send(client_rsa.export_public_key())
+    buffer = client_receive(2 * RSA_SIZE)
+
+    SERVER_PUBLIC_KEY = client_rsa.decrypt(buffer[0:RSA_SIZE])
+    SERVER_PUBLIC_KEY += client_rsa.decrypt(buffer[RSA_SIZE:2 * RSA_SIZE])
+    server_rsa = pk.RSA().from_DER(SERVER_PUBLIC_KEY)
+    del client_rsa
+    client_rsa = pk.RSA()
+    client_rsa.generate(RSA_SIZE * 8, EXPONENT)
+
+    buffer = client_rsa.export_public_key() + client_rsa.sign(SECRET_KEY, "SHA256")
+    buffer = server_rsa.encrypt(buffer[0:184]) + server_rsa.encrypt(buffer[184:368]) + server_rsa.encrypt(buffer[368:550])
+    client_send(buffer)
+
+    buffer = client_receive(RSA_SIZE)
+    if CHECK_MSG != client_rsa.decrypt(buffer):
+        raise Exception("Handshake failed")
+
+def authenticate_and_setup():
+    global SESSION_ID, aes
+
+    buffer = client_rsa.sign(SECRET_KEY, "SHA256")
+    buffer = server_rsa.encrypt(buffer[0:RSA_SIZE//2]) + server_rsa.encrypt(buffer[RSA_SIZE//2:RSA_SIZE])
+    client_send(buffer)
+
+    buffer = client_receive(RSA_SIZE)
+    buffer = client_rsa.decrypt(buffer)
+    SESSION_ID = buffer[0:8]
+
+    aes = cipher.AES.new(buffer[24:56], cipher.MODE_CBC, buffer[8:24])
+    
+def send_request(val) -> bytes:
+    global SESSION_ID
+    if SESSION_ID is None:
+        print("Session ID is not set. Please establish a session first.")
+        return False
+    request = bytes([val])
+    buffer = request + SESSION_ID
+    
+    plen = cipher.AES.block_size - (len(buffer) % cipher.AES.block_size)
+    
+    buffer = aes.encrypt(buffer + bytes([len(buffer)] * plen))
+    client_send(buffer)
+
+    buffer = client_receive(cipher.AES.block_size)
+    buffer = aes.decrypt(buffer)
+    if buffer[0] == 0x10:
+        return buffer[1:6]
+    else:
+        print("Command not found!")
+        return False
+
+def establish_session():
+    try:
+        initialize()
+        handshake()
+        authenticate_and_setup()
+        return True
+    except Exception as e:
+        client_close()
+        return False
+
+def close_session():
+    global SESSION_ID, ser
+    try:
+        client_close()
+        SESSION_ID = None
+        return True
+    except Exception as e:
+        print(e)
+        return False
+
+class Window(QDialog):
+    def __init__(self):
         super().__init__()
+        self.session_id = 0
 
-        self.setWindowTitle("Secure Client")
-        self.setGeometry(100, 100, 600, 400)
+        self.setFixedSize(800, 500)
+        self.setWindowTitle("Client Application")
 
-        self.serial_connection = None
-        self.port = port
-        self.baudrate = baudrate
+        self.log_text_edit = QTextEdit()
+        self.log_text_edit.setReadOnly(True)
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        layout = QVBoxLayout()
-        central_widget.setLayout(layout)
-
-        self.serial_settings_layout = QHBoxLayout()
-        layout.addLayout(self.serial_settings_layout)
-
-        self.port_label = QLabel("Port:")
-        self.serial_settings_layout.addWidget(self.port_label)
-
-        self.port_input = QLineEdit()
-        self.port_input.setPlaceholderText("COM port (/dev/ttyUSB0)")
-        if port:  # Pre-fill port if provided
-            self.port_input.setText(port)
-        self.serial_settings_layout.addWidget(self.port_input)
-
-        self.baudrate_label = QLabel("Baudrate:")
-        self.serial_settings_layout.addWidget(self.baudrate_label)
-
-        self.baudrate_input = QLineEdit()
-        self.baudrate_input.setPlaceholderText("115200")
-        if baudrate:  
-            self.baudrate_input.setText(baudrate)
-        self.serial_settings_layout.addWidget(self.baudrate_input)
-
-        self.session_button = QPushButton("Establish Session")
-        self.session_button.clicked.connect(self.toggle_session)
-        layout.addWidget(self.session_button)
-
-        self.temperature_button = QPushButton("Get Temperature")
-        self.temperature_button.clicked.connect(self.get_temperature)
-        self.temperature_button.setEnabled(False)
-        layout.addWidget(self.temperature_button)
-
-        self.relay_button = QPushButton("Toggle Relay")
-        self.relay_button.clicked.connect(self.toggle_relay)
-        self.relay_button.setEnabled(False)
-        layout.addWidget(self.relay_button)
-
-        self.log_label = QLabel("Logs:")
-        layout.addWidget(self.log_label)
-
-        self.log_area = QTextEdit()
-        self.log_area.setReadOnly(True)
-        layout.addWidget(self.log_area)
-
-        self.clear_log_button = QPushButton("Clear Logs")
-        self.clear_log_button.clicked.connect(self.clear_logs)
-        layout.addWidget(self.clear_log_button)
-
-        self.session_active = False
-
-    def toggle_session(self):
-        """Establish or close a session."""
-        if not self.session_active:
-            self.log("Establishing session...")
-            self.session_active = True
-            self.session_button.setText("Close Session")
-            self.temperature_button.setEnabled(True)
-            self.relay_button.setEnabled(True)
-
-            # Initialize serial connection
-            self.initialize_serial_connection()
-
-            self.log("Session established.")
-        else:
-            self.log("Closing session...")
-            self.session_active = False
-            self.session_button.setText("Establish Session")
-            self.temperature_button.setEnabled(False)
-            self.relay_button.setEnabled(False)
-
-            # Close serial connection
-            self.close_serial_connection()
-
-            self.log("Session closed.")
-
-    def initialize_serial_connection(self):
-        """Initialize the serial connection."""
         try:
-            self.serial_connection = serial.Serial(self.port, self.baudrate, timeout=1)
-            if self.serial_connection.is_open:
-                self.log(f"Connected to {self.port} at {self.baudrate} baud.")
-        except Exception as e:
-            self.log(f"Error initializing serial connection: {e}")
+            self.serial = serial.Serial(port="/dev/ttyUSB0", baudrate=115200, timeout=1)
+            if self.serial.is_open:
+                self.log_text_edit.append("Serial port opened successfully")
+            else:
+                self.log_text_edit.append("Failed to open serial port")
+        except serial.SerialException as e:
+            self.log_text_edit.append(f"Error opening serial port: {e}")
+            self.serial = None 
 
-    def close_serial_connection(self):
-        """Close the serial connection."""
-        if self.serial_connection and self.serial_connection.is_open:
-            self.serial_connection.close()
-            self.log(f"Connection closed.")
+        # Create buttons
+        self.session_button = QPushButton("Establish Session")
+        
+        self.toggle_relay_button = QPushButton("Toggle Relay")
+        self.get_temperature_button = QPushButton("Get the Temperature")
+        self.clear_log_button_widget = QPushButton("Clear the log")  
+        self.toggle_relay_button.setEnabled(False)
+        self.get_temperature_button.setEnabled(False)
 
-    def get_temperature(self):
-        """Request temperature from the ESP32 server."""
-        if self.session_active and self.serial_connection:
-            try:
-                # Send temperature request command
-                self.serial_connection.write(b"GET_TEMP\n")
-                response = self.serial_connection.readline().decode("utf-8").strip()
-                self.log(f"Temperature: {response} °C")
-            except Exception as e:
-                self.log(f"Error reading temperature: {e}")
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.session_button)
+        button_layout.addWidget(self.toggle_relay_button)
+        button_layout.addWidget(self.get_temperature_button)
+        button_layout.addWidget(self.clear_log_button_widget)
+
+        main_layout = QVBoxLayout()
+        main_layout.addLayout(button_layout)
+        main_layout.addWidget(self.log_text_edit)
+        self.setLayout(main_layout)
+
+        self.session_button.clicked.connect(self.start_session_button)
+        self.toggle_relay_button.clicked.connect(self.toggle_relay)
+        self.get_temperature_button.clicked.connect(self.get_temperature)
+        self.clear_log_button_widget.clicked.connect(self.clear_log)  
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.handle_serial_data)
+        self.timer.start(100)
+
+    def start_session_button(self):
+        global SERIAL_PORT, ERROR
+        SERIAL_PORT = "/dev/ttyUSB0"
+        if self.session_button.text() == "Establish Session":
+            success = establish_session()
+            if success:
+                self.session_id = int(QDateTime.currentSecsSinceEpoch())
+                self.session_button.setText("Close Session")
+                self.toggle_relay_button.setEnabled(True)
+                self.get_temperature_button.setEnabled(True)
+                self.log_text_edit.append("Establishing Session...")
+            else:
+                self.log_text_edit.append("Failed to establish session.")
         else:
-            self.log("Session not active or serial connection not established.")
+            success = close_session()
+            if success:
+                self.session_id = 0
+                self.session_button.setText("Establish Session")
+                self.toggle_relay_button.setEnabled(False)
+                self.get_temperature_button.setEnabled(False)
+                self.log_text_edit.append("Session closed.")
+            else:
+                self.log_text_edit.append("Failed to close session.")
 
     def toggle_relay(self):
-        """Toggle the relay on the ESP32 server."""
-        if self.session_active and self.serial_connection:
-            try:
-                # Send relay toggle command
-                self.serial_connection.write(b"TOGGLE_RELAY\n")
-                response = self.serial_connection.readline().decode("utf-8").strip()
-                self.log(f"Relay state: {response}")
-            except Exception as e:
-                self.log(f"Error toggling relay: {e}")
+        success = send_request(2).decode("utf-8")
+        if success =="11111":
+            self.log_text_edit.append("Toggle LED: ON")
+        elif success =="10101":
+            self.log_text_edit.append("Toggle LED: OFF")
         else:
-            self.log("Session not active or serial connection not established.")
+            self.log_text_edit.append("Error: Unable to toggle LED!")
 
-    def log(self, message):
-        """Log a message to the log area."""
-        self.log_area.append(f" {message}")
+    def get_temperature(self):
+        success = send_request(1).decode("utf-8")
+        if success:
+            self.log_text_edit.append("Temperature: " + success + "°C")
+        else:
+            self.log_text_edit.append("Error: Unable to get temperature")       
 
-    def clear_logs(self):
-        """Clear the log area."""
-        self.log_area.clear()
+    def clear_log(self): 
+        self.log_text_edit.clear()
+
+    def handle_serial_data(self):
+        if self.serial and self.serial.in_waiting > 0:
+            line = self.serial.readline().decode().strip()
+            if line.startswith("SESSION_ESTABLISHED"):
+                parts = line.split(':')
+                if len(parts) == 2:
+                    try:
+                        self.session_id = int(parts[1])
+                        self.log_text_edit.append(f"Session established with ID: {self.session_id}")
+                        self.session_button.setText("Close Session")
+                        self.toggle_relay_button.setEnabled(True)
+                        self.get_temperature_button.setEnabled(True)
+                    except ValueError:
+                        self.log_text_edit.append("Failed to parse session ID.")
+                else:
+                    self.log_text_edit.append("Unexpected format.")
+            elif line == "SESSION_CLOSED":
+                self.session_id = 0
+                self.session_button.setText("Establish Session")
+                self.toggle_relay_button.setEnabled(False)
+                self.get_temperature_button.setEnabled(False)
+                self.log_text_edit.append("Session closed.")
+            elif line.startswith("TEMPERATURE:"):
+                self.log_text_edit.append(f"Received Temperature: {line} | Session ID: {self.session_id}")
+            elif line.startswith("RELAY_TOGGLED"):
+                self.log_text_edit.append(f"Relay toggled. | Session ID: {self.session_id}")
+            elif line.startswith("NO_SESSION"):
+                self.log_text_edit.append(f"No session active. | Session ID: {self.session_id}")
+            elif line.startswith("UNKNOWN_COMMAND"):
+                self.log_text_edit.append(f"Unknown command received. | Session ID: {self.session_id}")
+            elif line:
+                self.log_text_edit.append(f"Unrecognized response: {line} | Session ID: {self.session_id}")
 
 if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(description="Secure Client GUI Application")
-    parser.add_argument("--port", type=str, help="The COM port (e.g., COM3 or /dev/ttyUSB0)")
-    parser.add_argument("--baudrate", type=str, help="The baud rate (e.g., 115200)")
-
-    args = parser.parse_args()
-
-
     app = QApplication(sys.argv)
-    gui = SecureClientGUI(port=args.port, baudrate=args.baudrate)
-    gui.show()
+    window = Window()
+    window.show()
     sys.exit(app.exec())
