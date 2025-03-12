@@ -161,7 +161,7 @@ class Window(QDialog):
         super().__init__()
         self.session_id = 0
 
-        self.setFixedSize(400, 250)
+        self.setFixedSize(600, 400)
         self.setWindowTitle("Client Application")
 
         self.log_text_edit = QTextEdit()
