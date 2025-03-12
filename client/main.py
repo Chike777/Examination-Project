@@ -5,16 +5,16 @@ from PyQt6.QtCore import QDateTime, QTimer
 from mbedtls import pk, hmac, hashlib, cipher
 import serial
 
-# Constants
-RSA_SIZE = 256
-EXPONENT = 65537
+# The Constants
+RSA_SIZE = 256 # RSA key size in bytes
+EXPONENT = 65537 # RSA public exponent
 SECRET_KEY = b"Fj2-;wu3Ur=ARl2!Tqi6IuKM3nG]8z1+"
 
-SERIAL_BAUDRATE = 115200
-CHECK_MSG = b"OKAY"
-ERROR = True
+SERIAL_BAUDRATE = 115200 # Baud rate for serial communication
+CHECK_MSG = b"OKAY" # Message to check handshake success
+ERROR = True # Global error flag
 
-# Global Variables
+# The Global Variables
 HMAC_KEY = None
 hmac_hash = None
 ser = None
@@ -51,6 +51,7 @@ def client_close():
         ser = None
 
 def client_send(buf: bytes):
+    # Append HMAC to the message and send it over the serial port
     hmac_hash.update(buf)
     buf += hmac_hash.digest()
     if len(buf) != ser.write(buf):
@@ -58,6 +59,7 @@ def client_send(buf: bytes):
         client_close()
 
 def client_receive(size: int) -> bytes:
+      # Receive data from the serial port and verify HMAC
     buffer = ser.read(size + hmac_hash.digest_size)
     hmac_hash.update(buffer[0:size])
     buff = buffer[size:size + hmac_hash.digest_size]
@@ -72,21 +74,24 @@ def client_receive(size: int) -> bytes:
 
 def handshake():
     global client_rsa, server_rsa
-
+ # Send client's public key to the server
     client_send(client_rsa.export_public_key())
     buffer = client_receive(2 * RSA_SIZE)
-
+    
+    # Decrypt server's public key and store it
     SERVER_PUBLIC_KEY = client_rsa.decrypt(buffer[0:RSA_SIZE])
     SERVER_PUBLIC_KEY += client_rsa.decrypt(buffer[RSA_SIZE:2 * RSA_SIZE])
     server_rsa = pk.RSA().from_DER(SERVER_PUBLIC_KEY)
     del client_rsa
     client_rsa = pk.RSA()
     client_rsa.generate(RSA_SIZE * 8, EXPONENT)
-
+    
+    # Send client's new public key and signature to the server
     buffer = client_rsa.export_public_key() + client_rsa.sign(SECRET_KEY, "SHA256")
     buffer = server_rsa.encrypt(buffer[0:184]) + server_rsa.encrypt(buffer[184:368]) + server_rsa.encrypt(buffer[368:550])
     client_send(buffer)
-
+    
+    # Verify handshake success
     buffer = client_receive(RSA_SIZE)
     if CHECK_MSG != client_rsa.decrypt(buffer):
         raise Exception("Handshake failed")
@@ -94,14 +99,17 @@ def handshake():
 def authenticate_and_setup():
     global SESSION_ID, aes
 
+    # Send client's signature to the server
     buffer = client_rsa.sign(SECRET_KEY, "SHA256")
     buffer = server_rsa.encrypt(buffer[0:RSA_SIZE//2]) + server_rsa.encrypt(buffer[RSA_SIZE//2:RSA_SIZE])
     client_send(buffer)
 
+ # Receive session ID and AES key from the server
     buffer = client_receive(RSA_SIZE)
     buffer = client_rsa.decrypt(buffer)
     SESSION_ID = buffer[0:8]
 
+  # Initialize AES cipher with the received key and IV
     aes = cipher.AES.new(buffer[24:56], cipher.MODE_CBC, buffer[8:24])
     
 def send_request(val) -> bytes:
@@ -112,11 +120,14 @@ def send_request(val) -> bytes:
     request = bytes([val])
     buffer = request + SESSION_ID
     
+    # Pad the buffer to match AES block size
     plen = cipher.AES.block_size - (len(buffer) % cipher.AES.block_size)
     
+    # Encrypt the buffer and send it
     buffer = aes.encrypt(buffer + bytes([len(buffer)] * plen))
     client_send(buffer)
 
+# Receive and decrypt the response
     buffer = client_receive(cipher.AES.block_size)
     buffer = aes.decrypt(buffer)
     if buffer[0] == 0x10:
@@ -150,7 +161,7 @@ class Window(QDialog):
         super().__init__()
         self.session_id = 0
 
-        self.setFixedSize(800, 500)
+        self.setFixedSize(400, 250)
         self.setWindowTitle("Client Application")
 
         self.log_text_edit = QTextEdit()
@@ -171,7 +182,7 @@ class Window(QDialog):
         
         self.toggle_relay_button = QPushButton("Toggle Relay")
         self.get_temperature_button = QPushButton("Get the Temperature")
-        self.clear_log_button_widget = QPushButton("Clear the log")  
+        self.clear_log_button_widget = QPushButton("Clear log")  
         self.toggle_relay_button.setEnabled(False)
         self.get_temperature_button.setEnabled(False)
 
@@ -205,7 +216,7 @@ class Window(QDialog):
                 self.session_button.setText("Close Session")
                 self.toggle_relay_button.setEnabled(True)
                 self.get_temperature_button.setEnabled(True)
-                self.log_text_edit.append("Establishing Session...")
+                self.log_text_edit.append("Established Session")
             else:
                 self.log_text_edit.append("Failed to establish session.")
         else:
@@ -221,9 +232,9 @@ class Window(QDialog):
 
     def toggle_relay(self):
         success = send_request(2).decode("utf-8")
-        if success =="11111":
+        if success =="10684":
             self.log_text_edit.append("Toggle LED: ON")
-        elif success =="10101":
+        elif success =="10254":
             self.log_text_edit.append("Toggle LED: OFF")
         else:
             self.log_text_edit.append("Error: Unable to toggle LED!")
